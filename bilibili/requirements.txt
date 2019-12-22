@@ -1,0 +1,7 @@
+# 此处为python爬取时所需要的依赖包
+requests
+datetime
+pandas
+psycopg2
+xlrd
+
