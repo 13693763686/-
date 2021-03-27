@@ -1,0 +1,97 @@
+-- 观察不在时间范围内的数据的个数，确定是否可以直接删除
+select count(*) from userbehavior where SUBSTR(time,1,8) not between "20171125" and "20171203"
+-- 筛选出满足数据集要求的时间范围内的数据
+select count(*) from userbehavior where SUBSTR(time,1,6) between "20171125" and "20171203"
+-- 创建新的数据表，删除掉异常数据
+insert into user select * from userbehavior where SUBSTR(time,1,8) between "20171125" and "20171203"
+-- 用户角度分析
+-- 计算总共的用户交互行为，大致了解活跃度::3734460
+select count(*) from user
+select max(userid) from user
+-- 计算总共的独立访问数，大致统计活跃的用户个数::36532
+-- 数据集中的id号最大为251277，因此，可以大致认为有1/8的用户处于活跃状态，这里还需要定义流失周期的长度
+-- 才能确定后面的计算
+select count(DISTINCT userid) from user
+-- 观察每天的独立访客数量,反映日活
+-- 发现每天的访客量都在25000以上，且12月份的三天的访问量都更高
+-- 考虑外部因素
+-- 考虑星期几的因素，但是表中存在两组星期六和星期日，故不是这个原因
+-- 工资的发放也不太合理
+-- 考虑内部因素，即内部活动，这里可以想到是双12的活动之前的抢券，购买
+-- 注意到从29号开始就是一个连续上升的趋势，
+select time, count(DISTINCT userid) as userNumber from user group by time order by userNumber desc
+-- 观察各类的行为的比例，确定转化率和大致的营收情况
+-- 可以观察到符合漏斗模型，下面可以进行转化率的计算
+select behaviour, count(1) as number from user group by behaviour order by number desc
+-- 转化率的计算,这里使用较为传统的方式，即pv，购物车和下单购买，收藏部分不予考虑
+-- 观察到pv到购物车的转化率很低，而购物车到购买的转化率很高
+-- 因此可以仔细进行用户研究，研究商品详情页为什么有这么低的转化率，是质量，评论还是展示问题
+-- 对于购物车部分来讲，转换率还不错，不过可以考虑继续发掘它的潜力吧
+select behaviour, number, concat(number/number1*100,"%") as convertionRate from
+(select behaviour, number,
+lag(number,1,0) over(order by number desc) as number1 from 
+(select behaviour, count(1) as number from user 
+where behaviour != "fav" group by behaviour order by number desc) as tmp) as tmp1
+-- 考虑每个用户的行为习惯,观察他们的各行为之间的比例
+-- 注意行转列和sum函数的应用
+-- 观察到最多购买次数为84次，相当于每天9次的购买频率
+-- 但这里的计数方式很奇怪，对于京东来说是必须要先加入购物车的，但是对于淘宝可以之直接购买
+select userid, 
+sum(case behaviour when "pv" THEN 1 ELSE 0 END) as pv,
+sum(case behaviour when "cart" THEN 1 ELSE 0 END) as cart,
+sum(case behaviour when "fav" THEN 1 ELSE 0 END) as fav,
+sum(case behaviour when "buy" THEN 1 ELSE 0 END) as buy
+from user group by userid order by buy desc
+-- 下面对数据做一些描述性统计
+-- 观察到人均购买量为2个，这种比较没有意义，更好的方式是有一个基准，例如行业和同比或者环比
+select avg(pv), avg(cart),avg(fav),avg(buy) from
+(select sum(case behaviour when "pv" THEN 1 ELSE 0 END) as pv,
+sum(case behaviour when "cart" THEN 1 ELSE 0 END) as cart,
+sum(case behaviour when "fav" THEN 1 ELSE 0 END) as fav,
+sum(case behaviour when "buy" THEN 1 ELSE 0 END) as buy
+from user group by userid order by buy desc) as tmp
+
+-- 从上面整个过程来看，9天的期间有36504的独立访客，3343684次详情页访问(可以更精确地通过每秒的点击量来感受为4.3次）
+-- 74744次购买记录，转换率为2.24%。
+-- 从结构来看，用户内部行为差距很大，购买最多为84次，最少为0次，个人的转化率也是完全不一样，给了细分市场的可能性
+-- 从趋势来看，访问量在11-28之后是一个逐渐增长的趋势
+-- 对比分析需要其它平台的数据，例如京东等
+
+-- 下面对商品进行分析
+
+-- 计算总共访问的物品的类型::916748
+select count(DISTINCT itemid) from user
+-- 计算总共访问的物品的category的情况::7080
+select count(DISTINCT category) from user
+-- 计算哪种商品最热门，itemid, 可以通过图形的方式验证是否是长尾分布，但是sql不太容易
+-- 上面的用户的活跃度也可以验证是否符合长尾分布、
+-- 观察到最热门的商品为812879，为1233件，远大于排名第二的商品，说明这是一个大热门，可以继续加大活动力度，
+-- 维持人们的购买意愿。
+select itemid, count(1)as number from user GROUP BY itemid order by number desc
+-- 计算卖出的所有的物品的数目
+select count(distinct itemid) from user where behaviour = "buy"
+-- 计算哪种类型的商品最受欢迎
+-- 观察到编号为4756105的商品种类最受欢迎，假设商品的编码从1开始，从数据集验证
+-- 数据集中最大的category为999980，最大的itemid为999976，显然不太合理，因此不能这样推测
+-- 那么这里我们就不能计算卖出的物品总数占所有的物品的百分比了
+select max(category) from user
+select max(itemid) from user
+select category, count(1)as number from user GROUP BY category order by number desc
+-- 计算哪种商品卖出去的数目最多，热度高和销量有时候并不相关
+-- 观察到卖出去最多的为57件，itemid为3122135
+-- 卖出去最多的种类为1464116,数目为1401
+select itemid, count(1)as number from user where behaviour = "buy" GROUP BY itemid order by number desc
+select category, count(1)as number from user where behaviour = "buy" GROUP BY category order by number desc
+-- 商品比较重要的属性就是复购率，复购率即在一段时间内购买的次数,反映了用户的忠诚度
+-- 观察到在单个物品的购买人数超过五人时，复购率都在50%以下，这才是相对比较正常的比例
+-- 对于某些商品只有一个人购买，但是购买的次数总是大于1次，可能是这种商品本来就是多件购买的属性
+select itemid, purchase,MultiplePurchase, concat(MultiplePurchase/purchase * 100, "%") as repurchase from
+(select itemid,
+sum(case when number > 1 then 1 else 0 end) as MultiplePurchase,
+sum(case when number >= 1 then 1 else 0 end) as purchase from
+(select itemid, userid, count(1) as number from user 
+where behaviour = "buy" group by itemid, userid order by itemid) as tmp 
+group by itemid) as tmp2 where purchase > 5 order by repurchase+0 desc
+-- 同样的，对于商品来讲，可以以时间为维度进行趋势的观察
+-- 由于这种趋势的观察通过图像的话更为直接，比文字描述要好，因此通过tableau来展示
+
